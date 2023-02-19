@@ -63,6 +63,7 @@ pub fn extendable(_args: TokenStream, input: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn extend(args: TokenStream, input: TokenStream) -> TokenStream {
     let mut ast = parse_macro_input!(input as DeriveInput);
+    let ident = &ast.ident;
     let ident_arg = args.to_string();
     let extend_ident = syn::parse_str::<syn::Ident>(&ident_arg).unwrap();
     let field_defs: &Vec<String> = match unsafe { _FIELD_DEFS.get(&extend_ident.clone().to_string()) } {
@@ -70,13 +71,30 @@ pub fn extend(args: TokenStream, input: TokenStream) -> TokenStream {
         None => panic!("extend can only be used with structs that have implemented the extendable attribute {:?}", unsafe {_FIELD_DEFS.keys() }),
     };
 
+    let mut func_impls = Vec::<quote::__private::TokenStream>::new();
+
     match &mut ast.data {
         syn::Data::Struct(ref mut struct_data) => {
             match &mut struct_data.fields {
                 syn::Fields::Named(fields) => {
                     for fd in field_defs {
                         if let Ok(field_def) = syn::Field::parse_named.parse_str(fd) {
-                            fields.named.push(field_def);
+                            fields.named.push(field_def.clone());
+
+                            let ty = &field_def.ty;
+                            let ident = &field_def.ident.clone().unwrap();
+
+                            let setter_ident = syn::Ident::new(&format!("set_{ident}"), ident.span());
+                            let getter_ident = syn::Ident::new(&format!("get_{ident}"), ident.span());
+
+                            func_impls.push(quote! {
+                                fn #setter_ident (&mut self, #ident: #ty) {
+                                    self.#ident = #ident;
+                                }
+                                fn #getter_ident (&self) -> #ty {
+                                    self.#ident
+                                }
+                            }.into());
                         }
                         else {
                             panic!("Failed to parse field definition: {fd}")
@@ -91,5 +109,8 @@ pub fn extend(args: TokenStream, input: TokenStream) -> TokenStream {
 
     quote! {
         #ast
+        impl #extend_ident for #ident {
+            #(#func_impls)*
+        }
     }.into()
 }
